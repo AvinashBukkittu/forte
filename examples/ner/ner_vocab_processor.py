@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from typing import Any, Dict
 from collections import Counter
 
 import numpy as np
@@ -56,10 +57,8 @@ def construct_word_embedding_table(embed_dict, alphabet):
 
 
 class CoNLL03VocabularyProcessor(VocabularyProcessor):
-    """
-    Vocabulary Processor for the datasets of CoNLL data
-    Create the vocabulary for the word, character, pos tag, chunk id and ner
-    tag
+    r"""Vocabulary Processor for the CoNLL format datasets. Create the
+    vocabulary for the word, character, pos tag, chunk id and ner tag.
     """
 
     def __init__(self) -> None:
@@ -74,7 +73,7 @@ class CoNLL03VocabularyProcessor(VocabularyProcessor):
         self.ner_cnt: Counter = Counter()
 
     # pylint: disable=unused-argument
-    def initialize(self, resource: Resources, configs: HParams):
+    def initialize(self, _: Resources, configs: HParams):
         self.min_frequency = configs.min_frequency
         self.normalize_digit = configs.normalize_digit
         self.embedding_path = configs.embedding_path
@@ -86,13 +85,10 @@ class CoNLL03VocabularyProcessor(VocabularyProcessor):
             return x
 
     def _process(self, data_pack: DataPack):
-        """
-        Process the data pack to collect vocabulary information.
+        r"""Process the data pack to collect vocabulary information.
 
         Args:
             data_pack: The ner data to create vocabulary with.
-
-        Returns:
 
         """
         # for data_pack in input_pack:
@@ -112,6 +108,13 @@ class CoNLL03VocabularyProcessor(VocabularyProcessor):
             for ner in instance["Token"]["ner"]:
                 self.ner_cnt[ner] += 1
 
+    def default_configs(self) -> Dict[str, Any]:
+        return {
+            "embedding_path": "ner_data/glove.6B/glove.6B.100d.txt",
+            "min_frequency": 1,
+            "normalize_digit": True
+        }
+
     def finish(self, resource: Resources):
         # if a singleton is in pre-trained embedding dict,
         # set the count to min_occur + c
@@ -122,6 +125,7 @@ class CoNLL03VocabularyProcessor(VocabularyProcessor):
         word_alphabet = Alphabet("word", self.word_cnt)
         char_alphabet = Alphabet("character", self.char_cnt)
         ner_alphabet = Alphabet("ner", self.ner_cnt)
+        pos_alphabet = Alphabet("pos", self.pos_cnt)
 
         embedding_dict = load_glove_embedding(self.embedding_path)
 
@@ -140,4 +144,5 @@ class CoNLL03VocabularyProcessor(VocabularyProcessor):
             word_alphabet=word_alphabet,
             char_alphabet=char_alphabet,
             ner_alphabet=ner_alphabet,
+            pos_alphabet=pos_alphabet,
             word_embedding_table=word_embedding_table)

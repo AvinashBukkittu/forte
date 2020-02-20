@@ -123,18 +123,23 @@ def get_qual_name(o, lower: bool = False) -> str:
 
 def create_class_with_kwargs(class_name: str,
                              class_args: Dict,
-                             h_params: Optional[Dict] = None):
+                             h_params: Optional[Dict] = None,
+                             module_paths: Optional[List[str]] = None):
     r"""Create class with the given arguments.
 
     Args:
         class_name (str): Class name.
         class_args (Dict): Class arguments.
         h_params (Dict): Hyperparameters for the processor.
+        module_paths (list): Paths to candidate modules to search for the
+            class. This is used if the class cannot be located solely based on
+            ``class_name``. The first module in the list that contains the class
+            is used.
 
     Returns:
         The class object and the hyperparameters for the processor.
     """
-    cls = get_class(class_name)
+    cls = get_class(class_name, module_paths)
     if not class_args:
         class_args = {}
     obj = cls(**class_args)

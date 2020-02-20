@@ -18,7 +18,7 @@ import random
 import time
 import pickle
 from pathlib import Path
-from typing import List, Tuple, Iterator, Optional
+from typing import Iterator, List, Optional, Tuple
 
 import numpy as np
 from tqdm import tqdm
@@ -37,7 +37,7 @@ from ft.onto.base_ontology import Token, Sentence
 logger = logging.getLogger(__name__)
 
 
-class CoNLLNERTrainer(BaseTrainer):
+class POSTrainer(BaseTrainer):
     def __init__(self):
         super().__init__()
 
@@ -45,7 +45,7 @@ class CoNLLNERTrainer(BaseTrainer):
 
         self.word_alphabet = None
         self.char_alphabet = None
-        self.ner_alphabet = None
+        self.pos_alphabet = None
 
         self.config_model = None
         self.config_data = None
@@ -66,9 +66,10 @@ class CoNLLNERTrainer(BaseTrainer):
     def initialize(self, resource: Resources, configs: HParams):
 
         self.resource = resource
+
         self.word_alphabet = resource.get("word_alphabet")
         self.char_alphabet = resource.get("char_alphabet")
-        self.ner_alphabet = resource.get("ner_alphabet")
+        self.pos_alphabet = resource.get("pos_alphabet")
 
         word_embedding_table = resource.get('word_embedding_table')
 
@@ -86,7 +87,7 @@ class CoNLLNERTrainer(BaseTrainer):
             configs.model_name,
             {"word_embedding_table": word_embedding_table,
              "char_vocab_size": self.char_alphabet.size(),
-             "tag_vocab_size": self.ner_alphabet.size(),
+             "tag_vocab_size": self.pos_alphabet.size(),
              "config_model": self.config_model},
             module_paths=["forte.models.ner.model"])
 
@@ -102,7 +103,7 @@ class CoNLLNERTrainer(BaseTrainer):
         request_string = {
             "context_type": Sentence,
             "request": {
-                Token: ["ner"],
+                Token: ["pos"],
                 Sentence: [],  # span by default
             }
         }
@@ -112,7 +113,7 @@ class CoNLLNERTrainer(BaseTrainer):
         tokens = instance["Token"]
         word_ids = []
         char_id_seqs = []
-        ner_tags, ner_ids = tokens["ner"], []
+        pos_tags, pos_ids = tokens["pos"], []
 
         for word in tokens["text"]:
             char_ids = []
@@ -125,15 +126,15 @@ class CoNLLNERTrainer(BaseTrainer):
             word = self.normalize_func(word)
             word_ids.append(self.word_alphabet.get_index(word))
 
-        for ner in ner_tags:
-            ner_ids.append(self.ner_alphabet.get_index(ner))
+        for pos in pos_tags:
+            pos_ids.append(self.pos_alphabet.get_index(pos))
 
         max_len = max([len(char_seq) for char_seq in char_id_seqs])
         self.max_char_length = max(self.max_char_length, max_len)
 
-        self.train_instances_cache.append((word_ids, char_id_seqs, ner_ids))
+        self.train_instances_cache.append((word_ids, char_id_seqs, pos_ids))
 
-    def pack_finish_action(self, pack_count):
+    def get_loss(self, instances):
         pass
 
     def epoch_finish_action(self, epoch):
@@ -143,7 +144,7 @@ class CoNLLNERTrainer(BaseTrainer):
             epoch (int): Epoch number
         """
         counter = len(self.train_instances_cache)
-        logger.info(f"Total number of ner_data: {counter}")
+        logger.info(f"Total number of pos_data: {counter}")
 
         lengths = \
             sum([len(instance[0]) for instance in self.train_instances_cache])
@@ -204,22 +205,6 @@ class CoNLLNERTrainer(BaseTrainer):
 
         if epoch >= self.config_data.num_epochs:
             self.request_stop_train()
-
-    @torch.no_grad()
-    def get_loss(self, instances: Iterator) -> float:
-        losses = 0
-        val_data = list(instances)
-        for i in tqdm(
-                range(0, len(val_data), self.config_data.test_batch_size)):
-            b_data = val_data[i: i + self.config_data.test_batch_size]
-            batch = self.get_batch_tensor(b_data, device=self.device)
-
-            word, char, labels, masks, unused_lengths = batch
-            loss = self.model(word, char, labels, mask=masks)
-            losses += loss.item()
-
-        mean_loss = losses / len(val_data)
-        return mean_loss
 
     def post_validation_action(self, eval_result):
         if self.__past_dev_result is None or \
@@ -314,13 +299,12 @@ class CoNLLNERTrainer(BaseTrainer):
         char_length = max(
             [max([len(charseq) for charseq in d[1]]) for d in data])
 
-        char_length = min(
-            self.config_data.max_char_length,
-            char_length + self.config_data.num_char_pad)
+        char_length = min(self.config_data.max_char_length,
+                          char_length + self.config_data.num_char_pad)
 
         wid_inputs = np.empty([batch_size, batch_length], dtype=np.int64)
-        cid_inputs = np.empty(
-            [batch_size, batch_length, char_length], dtype=np.int64)
+        cid_inputs = np.empty([batch_size, batch_length, char_length],
+                              dtype=np.int64)
         nid_inputs = np.empty([batch_size, batch_length], dtype=np.int64)
 
         masks = np.zeros([batch_size, batch_length], dtype=np.float32)
@@ -343,7 +327,7 @@ class CoNLLNERTrainer(BaseTrainer):
 
             # ner ids
             nid_inputs[i, :inst_size] = nids
-            nid_inputs[i, inst_size:] = self.ner_alphabet.pad_id
+            nid_inputs[i, inst_size:] = self.pos_alphabet.pad_id
 
             # masks
             masks[i, :inst_size] = 1.0

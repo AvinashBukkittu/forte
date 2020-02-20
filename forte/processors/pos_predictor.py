@@ -30,26 +30,20 @@ from forte.common.types import DataRequest
 from forte.data.datasets.conll import conll_utils
 from forte.data.ontology import Annotation
 from forte.models.ner import utils
+from forte.utils.utils import create_class_with_kwargs
 from forte.processors.base.batch_processor import FixedSizeBatchProcessor
 from ft.onto.base_ontology import Token, Sentence, EntityMention
 
 logger = logging.getLogger(__name__)
 
 
-class CoNLLNERPredictor(FixedSizeBatchProcessor):
-    r"""An Named Entity Recognizer trained according to `Ma, Xuezhe, and Eduard
-    Hovy. "End-to-end sequence labeling via bi-directional lstm-cnns-crf."
-    <https://arxiv.org/abs/1603.01354>`_.
-
-    Note that to use :class:`CoNLLNERPredictor`, the :attr:`ontology` of
-    :class:`Pipeline` must be an ontology that include
-    ``ft.onto.base_ontology.Token`` and ``ft.onto.base_ontology.Sentence``.
-    """
+class POSPredictor(FixedSizeBatchProcessor):
+    r"""A Part-Of-Speech Tagger."""
 
     def __init__(self):
         super().__init__()
         self.model = None
-        self.word_alphabet, self.char_alphabet, self.ner_alphabet = (
+        self.word_alphabet, self.char_alphabet, self.pos_alphabet = (
             None, None, None)
         self.resource = None
         self.config_model = None
@@ -78,7 +72,7 @@ class CoNLLNERPredictor(FixedSizeBatchProcessor):
 
         resource_path = configs.config_model.resource_dir
 
-        keys = {"word_alphabet", "char_alphabet", "ner_alphabet",
+        keys = {"word_alphabet", "char_alphabet", "pos_alphabet",
                 "word_embedding_table"}
 
         missing_keys = list(keys.difference(self.resource.keys()))
@@ -87,7 +81,7 @@ class CoNLLNERPredictor(FixedSizeBatchProcessor):
 
         self.word_alphabet = resource.get("word_alphabet")
         self.char_alphabet = resource.get("char_alphabet")
-        self.ner_alphabet = resource.get("ner_alphabet")
+        self.pos_alphabet = resource.get("pos_alphabet")
         word_embedding_table = resource.get("word_embedding_table")
 
         if resource.get("device"):
@@ -100,9 +94,13 @@ class CoNLLNERPredictor(FixedSizeBatchProcessor):
 
         if "model" not in self.resource.keys():
             def load_model(path):
-                model = BiRecurrentConvCRF(
-                    word_embedding_table, self.char_alphabet.size(),
-                    self.ner_alphabet.size(), self.config_model)
+                model, _ = create_class_with_kwargs(
+                    configs.model_name,
+                    {"word_embedding_table": word_embedding_table,
+                     "char_vocab_size": self.char_alphabet.size(),
+                     "tag_vocab_size": self.pos_alphabet.size(),
+                     "config_model": self.config_model},
+                    module_paths=["forte.models.ner.model"])
 
                 if os.path.exists(path):
                     with open(path, "rb") as f:
@@ -145,15 +143,15 @@ class CoNLLNERPredictor(FixedSizeBatchProcessor):
         word, char, masks, unused_lengths = batch_data
         preds = self.model.decode(word, char, mask=masks)
 
-        pred: Dict = {"Token": {"ner": [], "tid": []}}
+        pred: Dict = {"Token": {"pos": [], "tid": []}}
 
         for i in range(len(tokens["tid"])):
             tids = tokens["tid"][i]
-            ner_tags = []
+            pos_tags = []
             for j in range(len(tids)):
-                ner_tags.append(self.ner_alphabet.get_instance(preds[i][j]))
+                pos_tags.append(self.pos_alphabet.get_instance(preds[i][j]))
 
-            pred["Token"]["ner"].append(np.array(ner_tags))
+            pred["Token"]["pos"].append(np.array(pos_tags))
             pred["Token"]["tid"].append(np.array(tids))
 
         return pred
@@ -167,52 +165,24 @@ class CoNLLNERPredictor(FixedSizeBatchProcessor):
 
     def pack(self, data_pack: DataPack,
              output_dict: Optional[Dict[str, Dict[str, List[str]]]] = None):
-        """
-        Write the prediction results back to datapack. by writing the predicted
-        ner to the original tokens.
+        r"""Store the prediction results into the datapack.
+
+        Args:
+            data_pack (DataPack): Input datapack
+            output_dict (dict): A dict containing the predictions
         """
 
         if output_dict is None:
             return
 
-        current_entity_mention: Tuple[int, str] = (-1, "None")
-
         for i in range(len(output_dict["Token"]["tid"])):
-            # an instance
             for j in range(len(output_dict["Token"]["tid"][i])):
                 tid: int = output_dict["Token"]["tid"][i][j]  # type: ignore
 
                 orig_token: Token = data_pack.get_entry(tid)  # type: ignore
-                ner_tag: str = output_dict["Token"]["ner"][i][j]
+                pos_tag: str = output_dict["Token"]["pos"][i][j]
 
-                orig_token.set_fields(ner=ner_tag)
-
-                token = orig_token
-                token_ner = token.get_field("ner")
-                if token_ner[0] == "B":
-                    current_entity_mention = (token.span.begin, token_ner[2:])
-                elif token_ner[0] == "I":
-                    continue
-                elif token_ner[0] == "O":
-                    continue
-
-                elif token_ner[0] == "E":
-                    if token_ner[2:] != current_entity_mention[1]:
-                        continue
-
-                    kwargs_i = {"ner_type": current_entity_mention[1]}
-                    entity = EntityMention(data_pack,
-                                           current_entity_mention[0],
-                                           token.span.end)
-                    entity.set_fields(**kwargs_i)
-                    data_pack.add_or_get_entry(entity)
-                elif token_ner[0] == "S":
-                    current_entity_mention = (token.span.begin, token_ner[2:])
-                    kwargs_i = {"ner_type": current_entity_mention[1]}
-                    entity = EntityMention(data_pack, current_entity_mention[0],
-                                           token.span.end)
-                    entity.set_fields(**kwargs_i)
-                    data_pack.add_or_get_entry(entity)
+                orig_token.set_fields(pos=pos_tag)
 
     def get_batch_tensor(
             self, data: List[Tuple[List[int], List[List[int]]]],
@@ -241,18 +211,15 @@ class CoNLLNERPredictor(FixedSizeBatchProcessor):
         batch_size = len(data)
         batch_length = max([len(d[0]) for d in data])
         char_length = max(
-            [max([len(charseq) for charseq in d[1]]) for d in data]
-        )
+            [max([len(charseq) for charseq in d[1]]) for d in data])
 
         char_length = min(
             self.config_data.max_char_length,
-            char_length + self.config_data.num_char_pad,
-        )
+            char_length + self.config_data.num_char_pad)
 
         wid_inputs = np.empty([batch_size, batch_length], dtype=np.int64)
-        cid_inputs = np.empty(
-            [batch_size, batch_length, char_length], dtype=np.int64
-        )
+        cid_inputs = np.empty([batch_size, batch_length, char_length],
+                              dtype=np.int64)
 
         masks = np.zeros([batch_size, batch_length], dtype=np.float32)
 
@@ -282,69 +249,72 @@ class CoNLLNERPredictor(FixedSizeBatchProcessor):
     # TODO: change this to manageable size
     @staticmethod
     def default_configs():
-        r"""Default config for NER Predictor"""
+        r"""Default config for POS Predictor"""
 
         return {
-            "config_data": {
-                "train_path": "",
-                "val_path": "",
-                "test_path": "",
-                "num_epochs": 200,
-                "batch_size_tokens": 512,
-                "test_batch_size": 16,
-                "max_char_length": 45,
-                "num_char_pad": 2
-            },
-            "config_model": {
-                "output_hidden_size": 128,
-                "dropout_rate": 0.3,
-                "word_emb": {
-                    "dim": 100
+            "type": "BiRecurrentConvCRF",
+            "kwargs": {
+                "config_data": {
+                    "train_path": "",
+                    "val_path": "",
+                    "test_path": "",
+                    "num_epochs": 200,
+                    "batch_size_tokens": 512,
+                    "test_batch_size": 16,
+                    "max_char_length": 45,
+                    "num_char_pad": 2
                 },
-                "char_emb": {
-                    "dim": 30,
-                    "initializer": {
-                        "type": "normal_"
-                    }
-                },
-                "char_cnn_conv": {
-                    "in_channels": 30,
-                    "out_channels": 30,
-                    "kernel_size": 3,
-                    "padding": 2
-                },
-                "bilstm_sentence_encoder": {
-                    "rnn_cell_fw": {
-                        "input_size": 130,
-                        "type": "LSTMCell",
-                        "kwargs": {
-                            "num_units": 128
+                "config_model": {
+                    "output_hidden_size": 128,
+                    "dropout_rate": 0.3,
+                    "word_emb": {
+                        "dim": 100
+                    },
+                    "char_emb": {
+                        "dim": 30,
+                        "initializer": {
+                            "type": "normal_"
                         }
                     },
-                    "rnn_cell_share_config": "yes",
-                    "output_layer_fw": {
-                        "num_layers": 0
+                    "char_cnn_conv": {
+                        "in_channels": 30,
+                        "out_channels": 30,
+                        "kernel_size": 3,
+                        "padding": 2
                     },
-                    "output_layer_share_config": "yes"
-                },
-                "learning_rate": 0.01,
-                "momentum": 0.9,
-                "decay_interval": 1,
-                "decay_rate": 0.05,
-                "random_seed": 1234,
-                "initializer": {
-                    "type": "xavier_uniform_"
-                },
-                "model_path": "",
-                "resource_dir": ""
+                    "bilstm_sentence_encoder": {
+                        "rnn_cell_fw": {
+                            "input_size": 130,
+                            "type": "LSTMCell",
+                            "kwargs": {
+                                "num_units": 128
+                            }
+                        },
+                        "rnn_cell_share_config": "yes",
+                        "output_layer_fw": {
+                            "num_layers": 0
+                        },
+                        "output_layer_share_config": "yes"
+                    },
+                    "learning_rate": 0.01,
+                    "momentum": 0.9,
+                    "decay_interval": 1,
+                    "decay_rate": 0.05,
+                    "random_seed": 1234,
+                    "initializer": {
+                        "type": "xavier_uniform_"
+                    },
+                    "model_path": "",
+                    "resource_dir": ""
+                }
             }
         }
 
 
-class CoNLLNEREvaluator(Evaluator):
+class POSEvaluator(Evaluator):
     def __init__(self, config: Optional[HParams] = None):
         super().__init__(config)
-        self.test_component = CoNLLNERPredictor().component_name
+        self.test_component = POSPredictor().component_name
         self.output_file = "tmp_eval.txt"
         self.score_file = "tmp_eval.score"
         self.scores: Dict[str, float] = {}
@@ -354,7 +324,7 @@ class CoNLLNEREvaluator(Evaluator):
             "context_type": Sentence,
             "request": {
                 Token: {
-                    "fields": ["ner"],
+                    "fields": ["pos"],
                 },
                 Sentence: [],  # span by default
             },

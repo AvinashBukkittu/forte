@@ -17,9 +17,9 @@ import yaml
 
 from texar.torch.hyperparams import HParams
 from forte.data.readers.conll03_reader import CoNLL03Reader
-from forte.processors.ner_predictor import CoNLLNEREvaluator, CoNLLNERPredictor
+from forte.processors.pos_predictor import POSPredictor, POSEvaluator
 from forte.train_pipeline import TrainPipeline
-from forte.trainer.ner_trainer import CoNLLNERTrainer
+from forte.trainer.pos_trainer import POSTrainer
 from examples.ner.ner_vocab_processor import CoNLL03VocabularyProcessor
 
 logging.basicConfig(level=logging.DEBUG)
@@ -28,7 +28,7 @@ logging.basicConfig(level=logging.DEBUG)
 def main():
     config_data = yaml.safe_load(open("config_data.yml", "r"))
     config_model = yaml.safe_load(open("config_model.yml", "r"))
-    config_preprocess = yaml.safe_load(open("config_preprocessor.yml", "r"))
+    config_preprocess = yaml.safe_load(open("preprocessor_config.yml", "r"))
 
     config = HParams({}, default_hparams=None)
     config.add_hparam('model_name', 'BiRecurrentConvCRF')
@@ -41,14 +41,14 @@ def main():
     # Keep the vocabulary processor as a simple counter
     vocab_processor = CoNLL03VocabularyProcessor()
 
-    ner_trainer = CoNLLNERTrainer()
-    ner_predictor = CoNLLNERPredictor()
-    ner_evaluator = CoNLLNEREvaluator()
+    pos_trainer = POSTrainer()
+    pos_predictor = POSPredictor()
+    pos_evaluator = POSEvaluator()
 
-    train_pipe = TrainPipeline(train_reader=reader, trainer=ner_trainer,
+    train_pipe = TrainPipeline(train_reader=reader, trainer=pos_trainer,
                                dev_reader=reader, configs=config,
                                preprocessors=[vocab_processor],
-                               predictor=ner_predictor, evaluator=ner_evaluator)
+                               predictor=pos_predictor, evaluator=pos_evaluator)
     train_pipe.run()
 
 

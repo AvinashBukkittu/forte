@@ -58,9 +58,8 @@ def load_glove_embedding(embedding_path, normalize_digits=True):
                 ), f"glove_dim{embed_dim} cur_dim{len(tokens)}"
             embedd = np.empty(embed_dim, dtype=np.float32)
             embedd[:] = tokens[1:]
-            word = (
-                DIGIT_RE.sub("0", tokens[0]) if normalize_digits else tokens[0]
-            )
+            word = normalize_digit_word(tokens[0]) \
+                if normalize_digits else tokens[0]
             embedd_dict[word] = embedd
 
     return embedd_dict

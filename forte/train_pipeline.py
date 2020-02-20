@@ -36,26 +36,15 @@ class TrainPipeline:
                  predictor: Optional[BaseProcessor] = None):
         self.resource = Resources()
         self.configs = configs
-
+        self.preprocessors = preprocessors if preprocessors is not None else []
         train_reader.initialize(self.resource, self.configs)
-
-        if preprocessors is not None:
-            for p in preprocessors:
-                p.initialize(resource=self.resource,
-                             configs=configs.preprocessor)
-            self.preprocessors = preprocessors
-        else:
-            self.preprocessors = []
 
         self.train_reader = train_reader
         self.dev_reader = dev_reader
         self.trainer = trainer
 
-        if predictor is not None:
-            self.predictor = predictor
-
-        if evaluator is not None:
-            self.evaluator = evaluator
+        self.predictor = predictor
+        self.evaluator = evaluator
 
     def run(self):
         logging.info("Preparing the pipeline")
@@ -74,11 +63,13 @@ class TrainPipeline:
         self.finish()
 
     def prepare(self, *args, **kwargs):  # pylint: disable=unused-argument
-        prepare_pl = Pipeline()
+        prepare_pl = Pipeline(resource=self.resource)
         prepare_pl.set_reader(self.train_reader)
         for p in self.preprocessors:
-            prepare_pl.add_processor(p)
+            prepare_pl.add_processor(processor=p,
+                                     config=self.configs.preprocessor)
 
+        prepare_pl.initialize()
         prepare_pl.run(self.configs.config_data.train_path)
 
         for p in self.preprocessors:
@@ -107,7 +98,8 @@ class TrainPipeline:
     def _validate(self, epoch: int):
         validation_result = {"epoch": epoch}
 
-        if self.predictor is not None:
+        if self.predictor is not None and self.evaluator is not None:
+
             for pack in self.dev_reader.iter(
                     self.configs.config_data.val_path):
                 predicted_pack = pack.view()
@@ -115,7 +107,6 @@ class TrainPipeline:
                 self.evaluator.consume_next(predicted_pack, pack)
             validation_result["eval"] = self.evaluator.get_result()
 
-        if self.evaluator is not None:
             for pack in self.dev_reader.iter(
                     self.configs.config_data.test_path):
                 predicted_pack = pack.view()

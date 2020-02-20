@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any, Dict
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -28,8 +30,6 @@ class BiRecurrentConvCRF(nn.Module):
                  tag_vocab_size: int, config_model: HParams):
         super().__init__()
 
-        # TODO: Fix this. init_value doesn't need to be tensor but
-        #  we have to set it for type check
         self.word_embedder = WordEmbedder(init_value=word_embedding_table)
 
         self.char_embedder = WordEmbedder(
@@ -168,6 +168,10 @@ class BiRecurrentConvCRF(nn.Module):
 
         return output, hn, mask, length
 
+    @staticmethod
+    def default_configs() -> Dict[str, Any]:
+        return {}
+
 
 def prepare_rnn_seq(rnn_input, lengths, hx=None, masks=None, batch_first=False):
     """
@@ -176,7 +180,7 @@ def prepare_rnn_seq(rnn_input, lengths, hx=None, masks=None, batch_first=False):
         rnn_input: [seq_len, batch, input_size]:
             tensor containing the features of the input sequence.
         lengths: [batch]:
-            tensor containing the lengthes of the input sequence
+            tensor containing the lengths of the input sequence
         hx: [num_layers * num_directions, batch, hidden_size]:
             tensor containing the initial hidden state for each element
             in the batch.
